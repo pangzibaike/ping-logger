@@ -2,11 +2,11 @@
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ping Logger · 线路监测</title><link rel="stylesheet" href="/style.css"><script defer src="/chart.js"></script><script defer src="/app.js"></script></head>
 <body><main>
 <div class="toolbar" aria-label="监测控制">
-<button id="previous" title="上一个目标" aria-label="上一个目标">‹</button><div id="targets"></div><button id="next" title="下一个目标" aria-label="下一个目标">›</button>
 <form id="filter"><label for="cap">延迟上限：</label><input id="cap" type="number" min="1" max="10000" value="300" aria-label="延迟上限"><button>应用</button><button id="reset" type="button">重置</button><span id="cap-label">当前阈值：300 ms</span></form>
 <select id="hours" aria-label="时间范围"><option value="1">最近1小时</option><option value="6">最近6小时</option><option value="24" selected>最近24小时</option><option value="72">最近3天</option><option value="168">最近7天</option></select>
 <details id="management"><summary>目标管理</summary><div class="management-panel"><form id="add"><input id="name" placeholder="名称（可选）" maxlength="80" aria-label="目标名称"><input id="address" placeholder="IPv4 / IPv6 地址" required aria-label="目标 IP"><button>添加目标</button></form><button id="delete" hidden>停用当前目标</button><span>停用保留历史，再次添加相同 IP 可恢复。</span></div></details>
 </div>
+<div class="targetbar" aria-label="监测目标"><button id="previous" title="上一个目标" aria-label="上一个目标">‹</button><div id="targets"></div><button id="next" title="下一个目标" aria-label="下一个目标">›</button></div>
 <div class="statusbar"><span id="heading">添加一个目标，开始监测</span><span id="stats">每 60 秒采样</span><span id="freshness"></span></div>
 <p id="message" role="status"></p>
 <div class="chart"><canvas id="chart" aria-label="延迟和丢包历史图"></canvas></div>

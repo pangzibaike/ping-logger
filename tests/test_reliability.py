@@ -39,7 +39,16 @@ class Reliability(unittest.TestCase):
                 self.assertEqual(result.ms,(count+1)/2)
                 self.assertEqual(run.call_args.args[0][-1],address)
                 self.assertIn(str(count),run.call_args.args[0])
+                self.assertNotIn('-w',run.call_args.args[0])
+                self.assertEqual(run.call_args.kwargs['timeout'],6)
                 self.assertEqual(result.rtts,list(range(1,count+1)))
+
+    def test_slow_single_response_is_not_rejected(self):
+        output='64 bytes time=204 ms\n1 packets transmitted, 1 received, 0% packet loss'
+        with patch('monitor.subprocess.run',return_value=subprocess.CompletedProcess([],0,output,'')) as run:
+            result=monitor.probe('23.94.147.121',1)
+        self.assertNotIn('-w',run.call_args.args[0])
+        self.assertEqual((result.sent,result.received,result.ms,result.status),(1,1,204,'ok'))
 
     def test_failure_categories(self):
         for code,text,reason,status in [(1,'100% packet loss','timeout','loss'),(1,'Destination Host Unreachable','unreachable','loss'),
@@ -188,6 +197,19 @@ class Reliability(unittest.TestCase):
     def test_settings_validation(self):
         for key,value in [('interval',1),('packets',2),('workers',0),('retention_days',8),('enable_cleanup','yes')]:
             with self.assertRaises(ValueError): monitor.Settings(**{key:value})
+
+    def test_controls_precede_target_buttons(self):
+        from html.parser import HTMLParser
+        class IDs(HTMLParser):
+            def __init__(self): super().__init__(); self.values=[]
+            def handle_starttag(self,tag,attrs):
+                for name,value in attrs:
+                    if name=='id': self.values.append(value)
+        parser=IDs()
+        parser.feed((app.ROOT/'web'/'index.html').read_text())
+        self.assertEqual(len(parser.values),len(set(parser.values)))
+        for control in ('filter','hours','management'):
+            self.assertLess(parser.values.index(control),parser.values.index('targets'))
 
     def test_http_timeout_classification(self):
         handler=app.handler_for(self.db)
