@@ -1,0 +1,7 @@
+{
+  "interval": 60,
+  "packets": 1,
+  "workers": 4,
+  "retention_days": 7,
+  "enable_cleanup": false
+}

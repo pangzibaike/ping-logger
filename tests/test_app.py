@@ -41,26 +41,26 @@ class Tests(unittest.TestCase):
     def test_collector_retention_and_deleted_target_race(self):
         app.add_target(self.db, '1.1.1.1', 'test')
         with app.connect(self.db) as conn:
-            conn.execute('INSERT INTO samples VALUES(1,?,?,?)', (int(time.time())-app.RETENTION-1, 1, 'ok'))
+            conn.execute('INSERT INTO samples(target_id,ts,ms,status) VALUES(1,?,?,?)', (int(time.time())-app.RETENTION-1, 1, 'ok'))
         stop = threading.Event()
-        def fake_probe(_):
+        def fake_probe(*_):
             stop.set()
-            return 22, 'ok'
+            return app.parse_result(0, 'time=22 ms')
         with patch.object(app, 'probe', fake_probe):
-            app.collect(self.db, stop)
+            app.collect(self.db, stop, app.Settings(enable_cleanup=True))
         with app.connect(self.db) as conn:
             self.assertEqual(conn.execute('SELECT ms,status FROM samples').fetchall(), [(22, 'ok')])
             self.assertEqual(conn.execute('PRAGMA integrity_check').fetchone()[0], 'ok')
         stop.clear()
-        def delete_during_probe(_):
+        def delete_during_probe(*_):
             with app.connect(self.db) as conn:
-                conn.execute('DELETE FROM targets')
+                conn.execute('UPDATE targets SET active=0')
             stop.set()
-            return 1, 'ok'
+            return app.parse_result(0, 'time=1 ms')
         with patch.object(app, 'probe', delete_during_probe):
             app.collect(self.db, stop)
         with app.connect(self.db) as conn:
-            self.assertEqual(conn.execute('SELECT count(*) FROM samples').fetchone()[0], 0)
+            self.assertEqual(conn.execute('SELECT count(*) FROM samples').fetchone()[0], 1)
 
     def test_http(self):
         server = ThreadingHTTPServer(('127.0.0.1', 0), app.handler_for(self.db))
@@ -85,7 +85,7 @@ class Tests(unittest.TestCase):
             targets = json.load(client.open(base+'/api/targets'))
             self.assertEqual(targets[0]['address'], '1.1.1.1')
             with app.connect(self.db) as conn:
-                conn.executemany('INSERT INTO samples VALUES(?,?,?,?)', [(1,int(time.time())-i,ms,status) for i,ms,status in [(0,10,'ok'),(1,None,'loss'),(2,None,'error')]])
+                conn.executemany('INSERT INTO samples(target_id,ts,ms,status) VALUES(?,?,?,?)', [(1,int(time.time())-i,ms,status) for i,ms,status in [(0,10,'ok'),(1,None,'loss'),(2,None,'error')]])
             rows = json.load(client.open(base+'/api/data?target=1&hours=1'))['samples']
             self.assertEqual(len(rows), 3)
             for path in ('/', '/app.js', '/style.css', '/chart.js'):

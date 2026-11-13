@@ -1,6 +1,6 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let targets = [], selected = null, chart, generation = 0;
+let targets = [], selected = null, chart, generation = 0, targetGeneration = 0, refreshMs = 60000, softDeleteSupported = false;
 async function api(path, body) {
   const response = await fetch(path, body === undefined ? {cache:'no-store'} : {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   const data = await response.json();
@@ -9,13 +9,16 @@ async function api(path, body) {
 }
 function message(text) { $('message').textContent = text; }
 async function refreshTargets() {
-  targets = await api('/api/targets');
+  const token = ++targetGeneration;
+  const received = await api('/api/targets');
+  if (token !== targetGeneration) return;
+  targets = received;
   if (!targets.some(t => t.id === selected)) selected = targets[0]?.id ?? null;
   $('targets').replaceChildren(...targets.map(t => {
     const button = document.createElement('button');
     button.textContent = t.name === t.address ? t.address : `${t.name} · ${t.address}`;
     button.className = t.id === selected ? 'active' : '';
-    button.onclick = () => { selected = t.id; refreshTargets().catch(e=>message(e.message)); };
+    button.onclick = () => { selected = t.id; ++generation; refreshTargets().catch(e=>message(e.message)); };
     return button;
   }));
   await load();
@@ -31,23 +34,36 @@ async function load() {
   }
   const hours = Number($('hours').value);
   const data = await api(`/api/data?target=${target.id}&hours=${hours}`);
-  if (request !== generation) return;
+  if (request !== generation || selected !== target.id) return;
+  refreshMs = data.interval * 1000;
   const rows = data.samples, good = rows.filter(r=>r[2]==='ok'), loss = rows.filter(r=>r[2]==='loss').length;
   const errors = rows.length - good.length - loss, denominator = good.length + loss;
   const avg = good.length ? (good.reduce((s,r)=>s+r[1],0)/good.length).toFixed(1)+' ms' : '—';
   $('heading').textContent = `${target.name} → ${target.address}`;
-  $('stats').textContent = `平均延迟 ${avg}　｜　丢包率 ${denominator ? (100*loss/denominator).toFixed(1)+'%' : '—'}　｜　采样 ${rows.length} 次　｜　本机错误 ${errors} 次`;
+  const s = data.summary;
+  softDeleteSupported = Boolean(s && data.sample_details);
+  const ms = value => value == null ? '—' : value.toFixed(2)+' ms';
+  $('stats').textContent = s ? `所选 ${hours} 小时：最小 ${ms(s.min_ms)}　｜　平均 ${ms(s.avg_ms)}　｜　最大 ${ms(s.max_ms)}　｜　P95 ${ms(s.p95_ms)}　｜　丢包 ${s.loss_pct == null ? '—' : s.loss_pct.toFixed(1)+'%'}　｜　连续全丢 ${s.consecutive_loss_cycles} 个周期　｜　本机错误 ${s.probe_errors} 次` : `平均延迟 ${avg}　｜　丢包率 ${denominator ? (100*loss/denominator).toFixed(1)+'%' : '—'}　｜　采样 ${rows.length} 次　｜　本机错误 ${errors} 次`;
   const last = rows.at(-1);
-  $('freshness').textContent = last ? `最近采样：${new Date(last[0]*1000).toLocaleString()}${data.now-last[0]>180?' · 数据已过期':''}` : '等待首次采样，通常在 60 秒内出现。';
+  const labels = {success:'响应正常',partial_loss:'部分丢包',loss:'目标无响应',probe_error:'本机探测错误',interrupted:'采样中断',pending:'等待首次采样'};
+  const clock = value => value == null ? '—' : new Date(value*1000).toLocaleString();
+  $('freshness').textContent = data.state ? `当前状态：${labels[data.state.state] || data.state.state}（${data.state.reason || 'pending'}） · 最近采样 ${clock(data.state.latest)} · 所选范围最近成功 ${clock(s.last_success)} · 最近失败 ${clock(s.last_failure)}` : last ? `最近采样：${clock(last[0])}${data.now-last[0]>180?' · 数据已过期':''}` : '等待首次采样，通常在 60 秒内出现。';
+  const details = data.sample_details;
   const points=[];
-  rows.forEach((r,i)=> { if(i && r[0]-rows[i-1][0]>data.interval*1.5) points.push({x:(rows[i-1][0]+data.interval)*1000,y:null}); points.push({x:r[0]*1000,y:r[2]==='ok'?r[1]:null}); });
+  rows.forEach((r,i)=> { const interval = Math.max(details?.[i]?.interval || data.interval, details?.[i-1]?.interval || data.interval); if(i && r[0]-rows[i-1][0]>interval*1.5) points.push({x:(rows[i-1][0]+interval)*1000,y:null}); points.push({x:r[0]*1000,y:r[2]==='ok'?r[1]:null}); });
   const datasets = [{label:'延迟 (ms)',data:points,borderColor:'#127568',pointRadius:1,borderWidth:1.5,spanGaps:false},
-    ...[['loss','丢包','#df5b48'],['error','本机错误','#8a9893']].map(([status,label,color])=>({label,data:rows.filter(r=>r[2]===status).map(r=>({x:r[0]*1000,y:0})),showLine:false,pointRadius:4,backgroundColor:color,borderColor:color}))];
-  if(chart) chart.destroy();
-  chart = new Chart($('chart'),{type:'line',data:{datasets},options:{animation:false,responsive:true,maintainAspectRatio:false,parsing:false,scales:{x:{type:'linear',min:(data.now-hours*3600)*1000,max:data.now*1000,ticks:{maxTicksLimit:8,callback:v=>new Date(v).toLocaleString([], {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}},y:{beginAtZero:true,title:{display:true,text:'ms'}}},plugins:{tooltip:{callbacks:{title:items=>items.length?new Date(items[0].parsed.x).toLocaleString():'',label:ctx=>ctx.datasetIndex===0?`${ctx.parsed.y} ms`:ctx.dataset.label}}}}});
+    {label:'丢包率 (%)',yAxisID:'loss',data:details ? details.filter(r=>r.sent>r.received && r.status!=='error').map(r=>({x:r.ts*1000,y:100*(r.sent-r.received)/r.sent})) : rows.filter(r=>r[2]==='loss').map(r=>({x:r[0]*1000,y:100})),showLine:false,pointRadius:4,backgroundColor:'#df5b48'},
+    {label:'本机错误',data:rows.filter(r=>r[2]==='error').map(r=>({x:r[0]*1000,y:0})),showLine:false,pointRadius:4,backgroundColor:'#8a9893'}];
+  if (chart) {
+    chart.data.datasets = datasets;
+    chart.options.scales.x.min = (data.now-hours*3600)*1000;
+    chart.options.scales.x.max = data.now*1000;
+    chart.update('none');
+  } else chart = new Chart($('chart'),{type:'line',data:{datasets},options:{animation:false,responsive:true,maintainAspectRatio:false,parsing:false,scales:{x:{type:'linear',min:(data.now-hours*3600)*1000,max:data.now*1000,ticks:{maxTicksLimit:8,callback:v=>new Date(v).toLocaleString([], {month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}},y:{beginAtZero:true,title:{display:true,text:'ms'}},loss:{position:'right',min:0,max:100,grid:{drawOnChartArea:false},title:{display:true,text:'丢包率 %'}}},plugins:{tooltip:{callbacks:{title:items=>items.length?new Date(items[0].parsed.x).toLocaleString():'',label:ctx=>ctx.datasetIndex===0?`${ctx.parsed.y} ms`:ctx.datasetIndex===1?`${ctx.parsed.y.toFixed(1)}% 丢包`:ctx.dataset.label}}}}});
 }
 $('add').onsubmit = async event => { event.preventDefault(); try { await api('/api/targets',{address:$('address').value,name:$('name').value}); $('add').reset(); message('已添加，后台将持续采样。'); await refreshTargets(); } catch(e){ message(e.message); } };
-$('delete').onclick = async () => { if (!confirm('删除此目标及其全部历史记录？')) return; try { await api('/api/delete',{id:selected}); await refreshTargets(); } catch(e){message(e.message);} };
+$('delete').onclick = async () => { if (!softDeleteSupported) { message('旧版后端仍在运行：为保护历史数据，暂不允许删除目标。请安排升级后再操作。'); return; } if (!confirm('停用此目标？历史数据会保留，重新添加相同 IP 可恢复。')) return; try { await api('/api/delete',{id:selected}); ++generation; await refreshTargets(); } catch(e){message(e.message);} };
 $('hours').onchange = () => load().catch(e=>message(e.message));
-setInterval(()=>load().catch(e=>message('加载失败：'+e.message)),60000);
+async function tick() { try { await load(); } catch(e) { message('加载失败：'+e.message); } finally { setTimeout(tick, refreshMs); } }
+setTimeout(tick, refreshMs);
 refreshTargets().catch(e=>message('加载失败：'+e.message));
