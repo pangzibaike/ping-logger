@@ -28,6 +28,17 @@ async function run(){
   await vm.runInContext('refreshTargets()',context);
   await vm.runInContext('load()',context);
   assert.equal(created,1);
+  assert.equal(vm.runInContext('chart.options.scales.y.max',context),300);
+  element('cap').value='12';
+  await element('filter').onsubmit({preventDefault(){}});
+  assert.equal(vm.runInContext('chart.options.scales.y.max',context),12);
+  assert.equal(vm.runInContext('chart.data.datasets[3].data[0].actual_ms',context),20);
+  assert.equal(vm.runInContext('chart.data.datasets[3].data[0].y',context),12);
+  element('cap').value='-1';
+  await element('filter').onsubmit({preventDefault(){}});
+  assert.equal(vm.runInContext('maxLatency',context),12);
+  await element('reset').onclick();
+  assert.equal(vm.runInContext('maxLatency',context),300);
   assert.ok(updated>=1);
   assert.equal(element('heading').textContent,'one · 1.1.1.1');
   await element('heading').children[1].onclick();
@@ -67,6 +78,11 @@ async function run(){
   assert.match(element('freshness').textContent,/部分丢包/);
   assert.ok(Math.abs(vm.runInContext('chart.data.datasets[1].data[0].y',context)-100/3)<.001);
   assert.equal(created,1);
+  context.fetch=async path=>({ok:true,json:async()=>path==='/api/targets'?[{id:1,name:'one',address:'1.1.1.1'},{id:2,name:'two',address:'8.8.8.8'}]:body});
+  await element('next').onclick();
+  assert.equal(vm.runInContext('selected',context),1);
+  await element('previous').onclick();
+  assert.equal(vm.runInContext('selected',context),2);
   console.log('Frontend lifecycle, target race, gaps, stats, title and clipboard success/fallback/failure: PASS');
 }
 run().catch(e=>{console.error(e);process.exitCode=1;});
