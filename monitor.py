@@ -67,12 +67,14 @@ def parse_result(code, output, packets=1):
 
 def probe(address, packets=1):
     try:
-        result = subprocess.run(['ping', '-n', '-c', str(packets), '-i', '0.2', '-W', '2', '-w', '4', address],
+        # Do not combine count with -w: iputils may keep transmitting until
+        # replies reach the count, producing extra packets on paths slower than -i.
+        result = subprocess.run(['ping', '-n', '-c', str(packets), '-i', '0.2', '-W', '2', address],
                                 capture_output=True, text=True, timeout=6,
                                 env=dict(os.environ, LC_ALL='C'))
         outcome = parse_result(result.returncode, result.stdout + result.stderr, packets)
     except subprocess.TimeoutExpired:
-        # A hung command exceeds ping's own deadline: this is a local execution fault.
+        # The process safeguard expired: this is a local execution fault.
         LOG.warning('probe_process_timeout address=%s deadline=6', address)
         return Result(None, 'error', 'process_timeout', 0, 0, [])
     except FileNotFoundError:
