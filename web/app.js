@@ -2,6 +2,24 @@
 const $ = id => document.getElementById(id);
 let targets = [], selected = null, chart, generation = 0, targetGeneration = 0, refreshMs = 60000, softDeleteSupported = false;
 let maxLatency = 300;
+async function handleTargetKey(event) {
+  if (!['ArrowLeft','ArrowRight'].includes(event.key) || event.defaultPrevented || event.repeat || event.isComposing || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const element = event.target || document.activeElement;
+  if (element?.isContentEditable || ['INPUT','TEXTAREA','SELECT'].includes(element?.tagName) || element?.closest?.('input,textarea,select,[role="textbox"]')) return;
+  if (targets.length < 2) return;
+  event.preventDefault();
+  try { await switchTarget(event.key === 'ArrowLeft' ? -1 : 1); }
+  catch (error) { message(error.message); }
+}
+function chartTooltip(ctx) {
+  if (ctx.datasetIndex === 0) return `${ctx.parsed.y} ms`;
+  if (ctx.datasetIndex === 1) {
+    const point = ctx.raw;
+    return `本次${point.received ? '部分' : ''}丢包：${point.loss_pct.toFixed(1)}%（收到 ${point.received}/${point.sent} 包）`;
+  }
+  if (ctx.datasetIndex === 3) return `高延迟：${ctx.raw.actual_ms} ms`;
+  return ctx.dataset.label;
+}
 async function switchTarget(step) {
   if (!targets.length) return;
   selected = targets[(targets.findIndex(t => t.id === selected)+step+targets.length)%targets.length].id;
@@ -101,7 +119,7 @@ async function load() {
   const points=[];
   rows.forEach((r,i)=> { const interval = Math.max(details?.[i]?.interval || data.interval, details?.[i-1]?.interval || data.interval); if(i && r[0]-rows[i-1][0]>interval*1.5) points.push({x:(rows[i-1][0]+interval)*1000,y:null}); points.push({x:r[0]*1000,y:r[2]==='ok' && r[1]<=maxLatency?r[1]:null}); });
   const datasets = [{label:'Ping 延迟 (ms)',data:points,borderColor:'#1683ff',pointBackgroundColor:'#1683ff',pointRadius:1,borderWidth:1,spanGaps:false},
-    {label:'丢包率 (%)',yAxisID:'loss',data:details ? details.filter(r=>r.sent>r.received && r.status!=='error').map(r=>({x:r.ts*1000,y:100*(r.sent-r.received)/r.sent})) : rows.filter(r=>r[2]==='loss').map(r=>({x:r[0]*1000,y:100})),showLine:false,pointRadius:4,backgroundColor:'#df5b48'},
+    {label:'丢包',data:details ? details.filter(r=>r.sent>r.received && r.status!=='error').map(r=>({x:r.ts*1000,y:0,sent:r.sent,received:r.received,loss_pct:100*(r.sent-r.received)/r.sent})) : rows.filter(r=>r[2]==='loss').map(r=>({x:r[0]*1000,y:0,sent:1,received:0,loss_pct:100})),showLine:false,clip:false,pointRadius:4,pointHoverRadius:6,backgroundColor:'#df5b48'},
     {label:'本机错误',data:rows.filter(r=>r[2]==='error').map(r=>({x:r[0]*1000,y:0})),showLine:false,pointRadius:4,backgroundColor:'#888'},
     {label:'高延迟（原值见悬停）',data:rows.filter(r=>r[2]==='ok' && r[1]>maxLatency).map(r=>({x:r[0]*1000,y:maxLatency,actual_ms:r[1]})),showLine:false,pointRadius:4,backgroundColor:'#ff9800'}];
   if (chart) {
@@ -110,10 +128,11 @@ async function load() {
     chart.options.scales.x.max = data.now*1000;
     chart.options.scales.y.max = maxLatency;
     chart.update('none');
-  } else chart = new Chart($('chart'),{type:'line',data:{datasets},options:{animation:false,responsive:true,maintainAspectRatio:false,parsing:false,scales:{x:{type:'linear',min:(data.now-hours*3600)*1000,max:data.now*1000,ticks:{maxTicksLimit:12,callback:v=>new Date(v).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}},y:{beginAtZero:true,max:maxLatency},loss:{position:'right',min:0,max:100,grid:{drawOnChartArea:false},title:{display:true,text:'丢包率 %'}}},plugins:{legend:{labels:{boxHeight:10,font:{size:12}}},tooltip:{callbacks:{title:items=>items.length?new Date(items[0].parsed.x).toLocaleString():'',label:ctx=>ctx.datasetIndex===0?`${ctx.parsed.y} ms`:ctx.datasetIndex===1?`${ctx.parsed.y.toFixed(1)}% 丢包`:ctx.datasetIndex===3?`高延迟：${ctx.raw.actual_ms} ms`:ctx.dataset.label}}}}});
+  } else chart = new Chart($('chart'),{type:'line',data:{datasets},options:{animation:false,responsive:true,maintainAspectRatio:false,parsing:false,scales:{x:{type:'linear',min:(data.now-hours*3600)*1000,max:data.now*1000,ticks:{maxTicksLimit:12,callback:v=>new Date(v).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'})}},y:{beginAtZero:true,max:maxLatency}},plugins:{legend:{labels:{boxHeight:10,font:{size:12}}},tooltip:{callbacks:{title:items=>items.length?new Date(items[0].parsed.x).toLocaleString():'',label:chartTooltip}}}}});
 }
 $('previous').onclick = () => switchTarget(-1).catch(e=>message(e.message));
 $('next').onclick = () => switchTarget(1).catch(e=>message(e.message));
+document.addEventListener('keydown', handleTargetKey);
 $('filter').onsubmit = async event => {
   event.preventDefault();
   const value = Number($('cap').value);

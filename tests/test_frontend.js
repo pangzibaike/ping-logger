@@ -18,7 +18,8 @@ function node() {
 function element(id) { if(!elements.has(id)) {const item=node();item.value=id==='hours'?'24':'';elements.set(id,item);} return elements.get(id); }
 let created=0, updated=0;
 const body={samples:[[100,10,'ok'],[160,null,'loss'],[400,20,'ok']],now:400,interval:60};
-const document={getElementById:element,createElement:node,body:node(),activeElement:node(),execCommand:command=>{assert.equal(command,'copy');return fallbackResult;}};
+const listeners={};
+const document={getElementById:element,createElement:node,body:node(),activeElement:node(),addEventListener:(event,handler)=>{listeners[event]=handler;},execCommand:command=>{assert.equal(command,'copy');return fallbackResult;}};
 const context=vm.createContext({document,navigator:{clipboard:{writeText:async text=>copied.push(text)}},
   fetch:async path=>({ok:true,json:async()=>path==='/api/targets'?[{id:1,name:'one',address:'1.1.1.1'},{id:2,name:'two',address:'8.8.8.8'}]:body}),
   Chart: class {constructor(_,config){ created++;this.data=config.data;this.options=config.options;}update(){updated++;}destroy(){}},
@@ -60,7 +61,10 @@ async function run(){
   assert.equal(element('heading').children[1].textContent,'::1');
   vm.runInContext("renderHeading(targets[0])",context);
   assert.equal(vm.runInContext('chart.data.datasets[0].data.some(p=>p.y===null)',context),true);
-  assert.equal(vm.runInContext('chart.data.datasets[1].data[0].y',context),100);
+  assert.equal(vm.runInContext('chart.data.datasets[1].data[0].y',context),0);
+  assert.equal(vm.runInContext('chart.options.scales.loss',context),undefined);
+  assert.equal(vm.runInContext('chart.data.datasets[1].yAxisID',context),undefined);
+  assert.match(vm.runInContext('chartTooltip({datasetIndex:1,raw:chart.data.datasets[1].data[0]})',context),/本次丢包.*100\.0%.*0\/1/);
   await element('delete').onclick();
   assert.match(element('message').textContent,/旧版后端/);
   // A response belonging to the old selection must not overwrite the new one.
@@ -76,13 +80,40 @@ async function run(){
   await vm.runInContext('load()',context);
   assert.match(element('stats').textContent,/P95/);
   assert.match(element('freshness').textContent,/部分丢包/);
-  assert.ok(Math.abs(vm.runInContext('chart.data.datasets[1].data[0].y',context)-100/3)<.001);
+  assert.equal(vm.runInContext('chart.data.datasets[1].data[0].y',context),0);
+  assert.ok(Math.abs(vm.runInContext('chart.data.datasets[1].data[0].loss_pct',context)-100/3)<.001);
+  assert.match(vm.runInContext('chartTooltip({datasetIndex:1,raw:chart.data.datasets[1].data[0]})',context),/部分丢包.*33\.3%.*2\/3/);
+  assert.match(element('stats').textContent,/丢包 33\.3%/);
   assert.equal(created,1);
   context.fetch=async path=>({ok:true,json:async()=>path==='/api/targets'?[{id:1,name:'one',address:'1.1.1.1'},{id:2,name:'two',address:'8.8.8.8'}]:body});
   await element('next').onclick();
   assert.equal(vm.runInContext('selected',context),1);
   await element('previous').onclick();
   assert.equal(vm.runInContext('selected',context),2);
+  let prevented=false;
+  const key=(key,extra={})=>({key,target:{tagName:'BODY'},preventDefault(){prevented=true;},...extra});
+  element('hours').value='72';
+  element('cap').value='250';
+  await element('filter').onsubmit({preventDefault(){}});
+  await listeners.keydown(key('ArrowRight'));
+  assert.equal(vm.runInContext('selected',context),1);
+  assert.equal(prevented,true);
+  await listeners.keydown(key('ArrowLeft'));
+  assert.equal(vm.runInContext('selected',context),2);
+  assert.equal(element('hours').value,'72');
+  assert.equal(vm.runInContext('maxLatency',context),250);
+  for(const extra of [{target:{tagName:'INPUT'}},{target:{tagName:'TEXTAREA'}},{target:{tagName:'SELECT'}},{target:{isContentEditable:true}},{target:{closest:()=>({})}},{ctrlKey:true},{altKey:true},{metaKey:true},{shiftKey:true},{repeat:true},{isComposing:true},{defaultPrevented:true}]){
+    prevented=false;
+    await listeners.keydown(key('ArrowRight',extra));
+    assert.equal(vm.runInContext('selected',context),2);
+    assert.equal(prevented,false);
+  }
+  await listeners.keydown(key('ArrowUp'));
+  assert.equal(vm.runInContext('selected',context),2);
+  vm.runInContext('targets=[]',context);
+  await listeners.keydown(key('ArrowRight'));
+  assert.equal(vm.runInContext('selected',context),2);
+  assert.equal(created,1);
   console.log('Frontend lifecycle, target race, gaps, stats, title and clipboard success/fallback/failure: PASS');
 }
 run().catch(e=>{console.error(e);process.exitCode=1;});

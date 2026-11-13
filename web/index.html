@@ -10,5 +10,5 @@
 <div class="statusbar"><span id="heading">添加一个目标，开始监测</span><span id="stats">每 60 秒采样</span><span id="freshness"></span></div>
 <p id="message" role="status"></p>
 <div class="chart"><canvas id="chart" aria-label="延迟和丢包历史图"></canvas></div>
-<details class="help"><summary>统计说明</summary><p>蓝线：周期平均 RTT；橙点：超过延迟上限（悬停查看原值）；红点：周期丢包率（右轴）；灰点：本机探测错误。没有采样或无响应时断线，不将延迟补零。</p><p>历史统计基于成功包 RTT，P95 使用线性插值。丢包率排除本机错误；连续全丢按周期计，中断或本机错误会重置。悬停状态文字可查看最近成功、失败时间。</p><p>时间使用浏览器本地时区。Ping 是往返耗时，不能独立测量回程。</p></details>
+<details class="help"><summary>统计说明</summary><p>蓝线：周期平均 RTT；橙点：超过延迟上限（悬停查看原值）；底部红点：本次发生丢包，悬停查看丢包率和收包数，纵向位置不代表延迟；灰点：本机探测错误。没有采样或无响应时断线，不将延迟补零。</p><p>历史统计基于成功包 RTT，P95 使用线性插值。丢包率排除本机错误；连续全丢按周期计，中断或本机错误会重置。悬停状态文字可查看最近成功、失败时间。</p><p>左右方向键切换目标，输入和选择控件内不触发。时间使用浏览器本地时区。Ping 是往返耗时，不能独立测量回程。</p></details>
 </main></body></html>
