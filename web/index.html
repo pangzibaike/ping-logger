@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Ping Logger · 线路监测</title><link rel="stylesheet" href="/style.css"><script defer src="/chart.js"></script><script defer src="/app.js"></script></head>
+<body><main><header><div class="eyebrow">SERVER → TARGET · ICMP RTT</div><h1>Ping Logger <span>线路监测</span></h1><p>从这台服务器出发，持续记录到目标 IP 的往返延迟。</p></header>
+<section><form id="add"><h2>监测目标</h2><div class="form-row"><input id="name" placeholder="名称（可选）" maxlength="80" aria-label="目标名称"><input id="address" placeholder="输入 IPv4 / IPv6 地址" required aria-label="目标 IP"><button>添加目标</button></div></form><div id="targets"></div><p id="message" role="status"></p></section>
+<section><div class="toolbar"><h2 id="heading">添加一个目标，开始监测</h2><div><select id="hours" aria-label="时间范围"><option value="1">最近 1 小时</option><option value="6">最近 6 小时</option><option value="24" selected>最近 24 小时</option><option value="72">最近 3 天</option><option value="168">最近 7 天</option></select><button id="delete" class="secondary" hidden>删除目标</button></div></div><div id="stats">每 60 秒采样 · 历史保留 7 天</div><div class="chart"><canvas id="chart"></canvas></div><p id="freshness"></p></section>
+<footer>蓝线：延迟 · 红点：丢包 · 灰点：本机探测错误。丢包率排除本机错误，停机期间不计为丢包。<br>Ping 测量的是往返延迟，不能单独代表回程耗时。时间按浏览器本地时区显示。</footer></main></body></html>

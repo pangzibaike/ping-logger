@@ -1,0 +1,24 @@
+[Unit]
+Description=Ping Logger collector and loopback API
+After=network-online.target
+Wants=network-online.target
+[Service]
+User=ping-logger
+Group=ping-logger
+StateDirectory=ping-logger
+StateDirectoryMode=0750
+ExecStart=/usr/bin/python3 /opt/ping-logger/app.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+UMask=0027
+[Install]
+WantedBy=multi-user.target
