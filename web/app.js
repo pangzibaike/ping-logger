@@ -8,6 +8,45 @@ async function api(path, body) {
   return data;
 }
 function message(text) { $('message').textContent = text; }
+async function copyAddress(address) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(address);
+      return;
+    }
+  } catch (_) { /* Fall back when clipboard permission is unavailable. */ }
+  const previousFocus = document.activeElement;
+  const field = document.createElement('textarea');
+  field.value = address;
+  field.className = 'clipboard-helper';
+  field.setAttribute('readonly', '');
+  document.body.appendChild(field);
+  try {
+    field.select();
+    if (!document.execCommand('copy')) throw Error('复制失败');
+  } finally {
+    field.remove();
+    previousFocus?.focus({preventScroll:true});
+  }
+}
+function renderHeading(target) {
+  const name = document.createElement('span');
+  name.textContent = target.name === target.address ? '' : `${target.name} · `;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'copy-ip';
+  button.textContent = target.address;
+  button.title = '点击复制 IP';
+  button.setAttribute('aria-label', `复制 IP ${target.address}`);
+  const feedback = document.createElement('span');
+  feedback.className = 'copy-status';
+  feedback.setAttribute('role', 'status');
+  button.onclick = async () => {
+    try { await copyAddress(target.address); feedback.textContent = '已复制'; }
+    catch (_) { feedback.textContent = '复制失败，请选中 IP 手动复制'; }
+  };
+  $('heading').replaceChildren(name, button, feedback);
+}
 async function refreshTargets() {
   const token = ++targetGeneration;
   const received = await api('/api/targets');
@@ -39,7 +78,7 @@ async function load() {
   const rows = data.samples, good = rows.filter(r=>r[2]==='ok'), loss = rows.filter(r=>r[2]==='loss').length;
   const errors = rows.length - good.length - loss, denominator = good.length + loss;
   const avg = good.length ? (good.reduce((s,r)=>s+r[1],0)/good.length).toFixed(1)+' ms' : '—';
-  $('heading').textContent = `${target.name} → ${target.address}`;
+  renderHeading(target);
   const s = data.summary;
   softDeleteSupported = Boolean(s && data.sample_details);
   const ms = value => value == null ? '—' : value.toFixed(2)+' ms';
