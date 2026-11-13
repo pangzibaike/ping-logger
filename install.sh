@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 027
 REPO=pangzibaike/ping-logger
-VERSION=${PING_LOGGER_VERSION:-v1.0.0}
+VERSION=${PING_LOGGER_VERSION:-v1.1.0}
 PUBLIC_IP=${PUBLIC_IP:-}
 TMP=$(mktemp -d)
 trap 'rm -rf -- "$TMP"' EXIT
@@ -42,8 +42,16 @@ import socket,ipaddress,sys
 addresses={ipaddress.ip_address(r[4][0]) for r in socket.getaddrinfo(sys.argv[1],443,type=socket.SOCK_STREAM)}
 if ipaddress.ip_address(sys.argv[2]) not in addresses: sys.exit('sslip.io DNS 未解析到公网 IP，请检查 DNS 后重试')
 PY
-curl -fLsS --retry 3 "https://github.com/$REPO/archive/refs/tags/$VERSION.tar.gz" -o "$TMP/source.tar.gz"
-tar -xzf "$TMP/source.tar.gz" --strip-components=1 -C "$TMP"
+if [[ -n ${PING_LOGGER_SOURCE_DIR:-} ]]; then
+  SOURCE=$(realpath -- "$PING_LOGGER_SOURCE_DIR")
+  for item in app.py monitor.py storage.py tests web ping-logger.service ping-logger-web.service; do
+    [[ -e $SOURCE/$item ]] || fail "本地源码缺少 $item"
+    cp -r -- "$SOURCE/$item" "$TMP/"
+  done
+else
+  curl -fLsS --retry 3 "https://github.com/$REPO/archive/refs/tags/$VERSION.tar.gz" -o "$TMP/source.tar.gz"
+  tar -xzf "$TMP/source.tar.gz" --strip-components=1 -C "$TMP"
+fi
 python3 -m py_compile "$TMP/app.py"
 python3 -m unittest discover -s "$TMP/tests" -v
 # The distribution's Caddy package supplies the binary and caddy user.
@@ -55,6 +63,7 @@ install -d -m 755 /opt/ping-logger /opt/ping-logger/web
 install -d -m 750 -o ping-logger -g ping-logger /var/lib/ping-logger
 install -d -m 750 -o root -g caddy /etc/ping-logger
 install -m 644 "$TMP/app.py" /opt/ping-logger/app.py
+install -m 644 "$TMP/monitor.py" "$TMP/storage.py" /opt/ping-logger/
 install -m 644 "$TMP"/web/* /opt/ping-logger/web/
 install -m 644 "$TMP/ping-logger.service" /etc/systemd/system/
 PASSWORD=$(openssl rand -hex 16)

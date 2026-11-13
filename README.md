@@ -1,84 +1,145 @@
 # Ping Logger
 
-在新买的 VPS 上一键部署，通过网页添加目标 IP，持续记录 **ICMP 往返延迟（RTT）**，用折线图查看线路表现与丢包率。
+轻量 VPS / WSL ICMP 往返延迟监测。Python 标准库、SQLite WAL、HTTP Server、Chart.js 和 Linux iputils ping；不引入新的运行依赖，保留原有界面、Caddy HTTPS 和 Basic Auth。
 
-Python 标准库 + SQLite + 本地 Chart.js，无 pip、Node.js 或 Docker 运行依赖。Caddy 提供自动 HTTPS、证书续期及全站登录保护。
+**v1.1.0：可配置采样、逐目标健康检查和更完整的网络质量统计。** 从 v1.0.0 升级时，新版首次启动会备份并迁移数据库；请先阅读迁移和升级说明。
 
-## 一键安装
-
-支持全新的 **Debian 12/13、Ubuntu 22.04/24.04** 服务器（systemd）。需要 root、可直达的公网 IPv4 或 IPv6，以及入站 TCP **80、443**；云安全组和系统防火墙均需放行，安装器不会改动防火墙规则。出站需要 DNS、HTTPS 和目标 ICMP。
+## 运行与配置
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pangzibaike/ping-logger/v1.0.0/install.sh -o /tmp/ping-logger-install.sh && sudo bash /tmp/ping-logger-install.sh
+python3 app.py --db ./development.db --port 18080
+python3 app.py --db ./development.db --port 18080 --interval 10 --packets 3 --workers 4 --retention-days 30
 ```
 
-脚本从固定版本标签下载源码并先运行测试。安装完成会显示访问地址、用户名 `admin` 和随机密码。用浏览器打开地址，登录后添加目标，通常 60 秒内出现首次采样。关闭网页不影响后台采集。
-
-默认自动检测出口公网 IP，生成类似 `https://ping-203-0-113-10.sslip.io` 的地址（示例 IP 不可实际部署）。多网卡、NAT 或自动检测错误时请手动指定可入站的公网地址：
+仅绑定 127.0.0.1，本地访问 http://localhost:18080。后端自身没有登录认证，不要公开监听；公网访问必须经过带认证的 Caddy。WSL 开发模式无需域名和证书。
 
 ```bash
-sudo PUBLIC_IP=你的公网IP bash /tmp/ping-logger-install.sh
+cp config.example.json config.json
+python3 app.py --db ./development.db --config ./config.json
 ```
 
-IPv6 会以短横线替换冒号生成 sslip.io 域名；客户端也需要 IPv6 连通性。公网 IP 改变后需要同步修改 `/etc/ping-logger/Caddyfile` 中的域名并重启网页服务。
+| JSON 字段 / CLI | 可选值 | 默认 |
+|---|---|---|
+| interval / --interval | 10、30、60 秒 | 60 |
+| packets / --packets | 1、3、5 包 | 1 |
+| workers / --workers | 整数 1–20 | 4 |
+| retention_days / --retention-days | 7、30 天 | 7 |
+| enable_cleanup / --enable-cleanup | JSON 布尔 / CLI 启用标志 | false |
 
-**sslip.io 只提供 DNS，不提供证书或流量代理。** Caddy 向公共证书机构申请并续期证书。签发依赖公网连通性、DNS 与证书机构限额；脚本会验证 HTTPS，失败时输出诊断说明并保留服务继续重试，不会宣称签发成功。
+CLI 覆盖 JSON；非法参数或未知字段拒绝启动。配置启动时加载，修改后需操作者安排重启生效。网页管理目标：最多 20 个，支持 IPv4/IPv6 字面地址，不接受域名、回环、组播、未指定和链路本地地址。
 
-## 功能与统计口径
+## 采样和统计
 
-- 网页添加、切换、删除目标，支持 IPv4 / IPv6，最多 20 个。
-- 每个目标每 60 秒一个 ICMP 包，超时 2 秒；最多 4 个并发探测。
-- 保留 7 天历史，可查看 1/6/24/72/168 小时。
-- 平均延迟只计算成功样本。丢包率 = 丢包 /（成功 + 丢包）；本机执行错误另计。
-- 本机没有路由、权限不足或 ping 无法执行等属于探测错误；超时及远端返回不可达属于失败探测。
-- 采样中断不伪造为丢包，折线断开；时间轴按实际时间绘制。时间使用浏览器本地时区。
-- 删除目标会同时删除该目标历史，网页操作前会提示确认。
+- 每个目标每周期只写一条汇总记录，保存发送/成功包数、平均/最小/最大 RTT、成功包 RTT 列表。失败包数为 sent-received；单包时 min=avg=max。
+- ping 使用 `-n -c N -i 0.2 -W 2 -w 4`；单包等待上限 2 秒，整次命令期限 4 秒，外层进程保护超时 6 秒。并非每包均独占 2 秒。
+- 线程池最多 workers 个探测进程。周期不重叠；过慢时记录 collection_overrun，不额外启动第二轮。退出时跳过尚未开始的任务，活动命令受 6 秒保护期限限制，已完成结果仍写入。
+- 图中延迟为每周期成功包平均值；部分丢包保留成功 RTT 并在右轴显示周期丢包百分比。本机错误为灰点；无响应或停采断线，不将延迟补零。
+- 历史 min/avg/max、P50/P95/P99 基于所选范围内**所有成功包 RTT**，不再次平均周期均值。分位数按排序后位置 `(n-1)*p` 线性插值；只有一个样本时等于该实测值，无样本返回 null，界面显示“—”。iputils 的 time<1 按上界 1ms 记录，并非精确值。
+- 丢包率 = 失败包数 / 有效发送包数；本地权限、缺路由、命令缺失、进程异常和系统错误不计网络丢包。没有有效包返回 null。
+- 连续丢包是**连续全丢采样周期数**，不是单包连续失败数；部分成功、本机错误或时间断档会重置。最近成功是有成功包的周期，最近失败是有网络丢包的周期，本机错误不算网络失败。
+- summary 属于所选时间范围；current 是最新一个周期，可能早于所选范围；state 是目标当前状态。最近成功/失败字段限于各自统计范围，不推断已清理历史之外的信息。
 
-Ping 测的是两个方向合计的往返耗时，**不能独立测量回程单向延迟，也不能识别具体回程路由**。填入家庭公网 IP 时，家庭路由器必须响应 ICMP；防火墙禁 Ping、ICMP 限速也可能表现为丢包。纯 IPv6 VPS 无法直接探测 IPv4 目标，反之亦然。
+Ping 是 RTT，不能独立测回程或显示路由。目标禁用/限制 ICMP 会影响结果，本机必须具备目标 IP 协议的网络连通性。
 
-## 管理与排错
+## API 与健康检查
+
+保留 /api/targets、/api/data?target=ID&hours=24、/api/delete、/api/health。samples 仍为 `[ts,ms,status]` 数组，status 保持 ok/loss/error。新增 sample_details、summary、current、state 和 retention_days。部分丢包保留 status=ok，具体由 sent/received 和 reason 区分。
+
+时间范围仍是 1/6/24/72/168 小时；30 天保留不等于新增 30 天网页视图。删除接口改为**停用**，保留 ID 和历史，再次添加相同 IP 恢复监测。启用保留策略后，停用目标的过期历史也会被清理，不保证永久归档。
+
+健康接口保留 ok、targets（数量）、latest（全局最新时间），新增 sampling_ok 和逐目标 details。每个目标通过主键索引单独查询最新记录，不会被其他目标掩盖。
+
+| state | 含义 |
+|---|---|
+| pending | 尚无采样 |
+| success | 有响应，无丢包 |
+| partial_loss | 部分成功、部分丢包 |
+| loss | 全丢，采集器仍在工作 |
+| probe_error | 本地探测错误 |
+| interrupted | 采样超过宽限期 |
+
+宽限期为 `max(3×interval, 20×6/workers+10)` 秒，兼顾最大目标数量排队。任一目标 pending/interrupted/probe_error 返回 503；仅网络丢包返回 200，但明确显示 loss。无目标返回 200。ok 比旧版更严格，健康不代表网络无丢包。
+
+## 数据库与迁移
+
+Schema version 2（PRAGMA user_version）：
+
+- targets 保留 id/address/name，新增 active。
+- samples 保留 target_id/ts/ms/status，新增 reason、sent、received、min_ms、max_ms、rtts（JSON）、interval。
+- 保留 `(target_id,ts)` 主键，新增 samples_expiry(ts) 索引供过期清理。
+- 旧样本按单包语义回填：成功 1/1，丢包 1/0，本机错误 0/0；reason=legacy，不猜测过去无法确认的失败原因。
+
+新版下次启动时自动迁移。迁移前通过 SQLite Backup API 自动创建 `数据库路径.pre-v2-时间戳.sqlite` 一致性备份。迁移事务不删除目标和历史，重复启动不重复迁移。新版库不要交回旧版采集器；回退应保留新库，恢复迁移前备份，备份后的新样本不会自动合并。
+
+连接启用 WAL、foreign_keys、5 秒 busy_timeout、synchronous=FULL；探测在事务外执行，写入为短事务。busy/locked 最多三次尝试并记录日志，耗尽后本轮报错、下轮继续。外部写锁一直不释放仍需人为排查，无法保证持锁期间写入成功。
+
+## 保留与空间管理
+
+**防止未经确认删除已有数据，默认关闭清理。** 启用前先备份并确认天数：
 
 ```bash
-sudo systemctl status ping-logger ping-logger-web
+python3 app.py --db ./development.db --retention-days 30 --enable-cleanup
+```
+
+启用后每轮按 ts 索引最多删除 5000 条过期记录，积压分多轮处理；随后执行 PASSIVE checkpoint 和增量空闲页回收。不删除 WAL/SHM，不执行全库 VACUUM。已有库未启用 incremental auto_vacuum 时不强制重建，空闲页可复用，但文件不保证马上缩小。
+
+不启用清理则数据库持续增长，生产使用应由操作者确认后启用。20 目标、10 秒周期、30 天约 518 万条汇总记录，空间取决于包数，需要监控磁盘。长期读事务可能延迟 WAL 回收，不要用外部工具长期持有事务。
+
+## 安装和升级
+
+全新 Debian/Ubuntu systemd 主机需放行公网 TCP 80/443。仍使用 sslip.io 域名、Caddy 自动 HTTPS 和全站 Basic Auth；已有 Caddy 或端口占用会停止，不覆盖现有网关。
+
+在全新服务器上一键安装 v1.1.0：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pangzibaike/ping-logger/v1.1.0/install.sh -o /tmp/ping-logger-install.sh && sudo bash /tmp/ping-logger-install.sh
+```
+
+安装完成会显示 sslip.io HTTPS 地址、admin 用户名和随机密码。公网 IP 自动检测错误时，可用 `sudo PUBLIC_IP=你的公网IP bash /tmp/ping-logger-install.sh` 指定。
+
+也支持在全新主机从当前源码安装（会安装依赖、创建并启动服务，请自行确认环境）：
+
+```bash
+sudo PING_LOGGER_SOURCE_DIR="$PWD" bash install.sh
+```
+
+v1.0.0 安装命令不包含这些改进。安装器用于首次安装，不能用它覆盖已有安装。
+
+已有安装应先备份源码和数据库，由操作者安排维护窗口停止旧进程，替换 app.py、monitor.py、storage.py 和 web 文件，再启动。不要让两个采集器写同一库。先在数据库副本上验证迁移，开启清理前确认保留范围。在线备份使用 SQLite Backup API，不直接只复制正在写入的 .db 文件。
+
+systemd 参数可用 `systemctl edit ping-logger` 的 ExecStart 覆盖。unit 改动需操作者执行 daemon-reload 和重启；本次未执行。两个 unit 保留非 root 用户、最小 capability、异常自动重启、Caddy 安全配置，新增 journal 输出和 45 秒停止期限。SIGTERM/SIGINT 后完成当前写入并退出。新参数无须改 Caddy 配置。新前端兼容旧后端只读展示；为保护历史，检测到旧后端时拒绝删除操作。
+
+## 故障排查
+
+```bash
 sudo journalctl -u ping-logger -u ping-logger-web -n 100 --no-pager
-sudo cat /etc/ping-logger/credentials
-curl -fsS http://127.0.0.1:18080/api/health
+curl -sS http://127.0.0.1:18080/api/health
 ```
 
-健康检查：没有目标时健康；有目标而尚无采样或最新样本超过 180 秒时返回 503。探测错误表示采集器仍在运行，需要检查服务器的 ICMP 权限和网络；健康检查不代表目标可达。
+| 日志 / reason | 排查方向 |
+|---|---|
+| http_connection_timeout | HTTP 读写超时，例如浏览器空闲预连接，与 Ping 无响应无关 |
+| http_client_disconnected | 浏览器断开 |
+| timeout / unreachable | 目标无响应 / 远端不可达 |
+| permission / no_route | 本地权限 / 路由 |
+| command_missing | 缺少 iputils-ping |
+| process_timeout / system_error | 进程超过期限 / 系统执行故障，不计网络丢包 |
+| database_busy | 写锁或存储繁忙 |
+| collection_cycle_failed | 保留 traceback，检查磁盘、库和异常原因 |
+| collection_overrun | 周期、目标数和并发不匹配 |
 
-路径：程序 `/opt/ping-logger`；数据库 `/var/lib/ping-logger/samples.db`；网关配置 `/etc/ping-logger/Caddyfile`；登录凭据 `/etc/ping-logger/credentials`（仅 root 可读）。Python 只监听 `127.0.0.1:18080`；公网请求必须经过 Caddy 的 HTTPS 和 Basic 登录。网页写入只接受 JSON，并检查浏览器 Origin。
+旧日志 `INFO:root:Request timed out: TimeoutError('timed out')` 源于标准库 http.server.BaseHTTPRequestHandler.handle_one_request() 捕获 HTTP TimeoutError 后调用 log_error，旧项目将日志统一转为 INFO。新版独立分类并保留原因，不吞异常。普通 ICMP 丢包只记录 DEBUG 并写库，本机探测错误为 WARNING/ERROR。
 
-忘记密码可用 `caddy hash-password` 交互生成新哈希，替换 Caddyfile 中 `admin` 后的哈希，再执行 `sudo systemctl restart ping-logger-web`。同步更新或删除本地 credentials 中旧密码；网页认证使用的是哈希。Basic 登录由浏览器记忆，退出请关闭相应浏览器会话。
-
-安装器拒绝重复安装、已有 Caddy 和 80/443/18080 端口冲突，避免覆盖现有网站。已有反向代理时手动运行后端并将本项目 Caddyfile 的站点块合并进现有配置；**必须保留认证，不要将后端端口直接暴露公网**。
-
-## 更新与回滚
-
-首版安装器只负责首次安装；不自动更新或修改已有配置。后续版本手动更新：下载对应版本源码，运行测试，停止 `ping-logger`，备份 `/opt/ping-logger` 和 `/var/lib/ping-logger`（包含 SQLite 的 WAL/SHM 文件），替换程序与 web 文件，再启动并验证健康检查及网页。失败则停服务、恢复备份后重启。更新网关或 unit 前另备份配置并验证。不要在服务写入时仅复制 `samples.db`。
-
-## 卸载
-
-```bash
-sudo systemctl disable --now ping-logger ping-logger-web
-sudo rm -f /etc/systemd/system/ping-logger.service /etc/systemd/system/ping-logger-web.service
-sudo systemctl daemon-reload
-sudo rm -rf /opt/ping-logger
-```
-
-上述命令保留数据库、凭据和证书。确认不再需要后，可自行删除 `/var/lib/ping-logger` 和 `/etc/ping-logger`。Caddy 软件包及其证书存储默认保留。
-
-## 开发与验证
+## 测试
 
 ```bash
 python3 -m unittest discover -s tests -v
-python3 app.py --db ./development.db --port 18080
+node tests/test_frontend.js
+bash -n install.sh
 ```
 
-本地开发访问 `http://127.0.0.1:18080`，开发后端自身不处理认证。探测命令使用 Linux iputils 参数，不支持 Windows 自带 ping。
+Node 只用于开发测试，不是运行依赖。测试涵盖 IPv4/IPv6 命令、分类、多包、并发、迁移、事务、清理、健康、HTTP 超时、图表复用、切换乱序和数据缺口。真实公网 ICMP 和证书签发仍受网络影响。
 
 ## 致谢与许可
 
-感谢 [sslip.io](https://sslip.io/) 提供便捷的 IP 域名 DNS 服务，让没有自有域名的服务器也能快速获得可解析的域名。感谢 [Caddy](https://caddyserver.com/docs/automatic-https) 的自动 HTTPS，以及 [Chart.js](https://www.chartjs.org/) 的图表组件。
-
-本项目采用 MIT License。`web/chart.js` 为 Chart.js 4.5.1，采用 MIT License，版权归 Chart.js Contributors；完整许可见 `THIRD_PARTY_LICENSES.md`。
+感谢 [sslip.io](https://sslip.io/) 的 IP 域名 DNS、Caddy 自动 HTTPS 和 Chart.js。sslip.io 提供 DNS，不代理流量或签发证书。许可见 LICENSE / THIRD_PARTY_LICENSES.md。
