@@ -2,7 +2,7 @@
 
 轻量 VPS / WSL ICMP 往返延迟监测。Python 标准库、SQLite WAL、HTTP Server、Chart.js 和 Linux iputils ping；不引入新的运行依赖，保留原有界面、Caddy HTTPS 和 Basic Auth。
 
-**v1.1.0：可配置采样、逐目标健康检查和更完整的网络质量统计。** 从 v1.0.0 升级时，新版首次启动会备份并迁移数据库；请先阅读迁移和升级说明。
+**v1.1.1：修复安装器版本变量被 /etc/os-release 覆盖而导致的下载 URL 错误，并包含此前的采样与前端修复。** 从 v1.0.0 升级时，新版首次启动会备份并迁移数据库；请先阅读迁移和升级说明。
 
 ## 运行与配置
 
@@ -89,10 +89,10 @@ python3 app.py --db ./development.db --retention-days 30 --enable-cleanup
 
 全新 Debian/Ubuntu systemd 主机需放行公网 TCP 80/443。仍使用 sslip.io 域名、Caddy 自动 HTTPS 和全站 Basic Auth；已有 Caddy 或端口占用会停止，不覆盖现有网关。
 
-在全新服务器上一键安装 v1.1.0：
+在全新服务器上一键安装 v1.1.1：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/pangzibaike/ping-logger/v1.1.0/install.sh -o /tmp/ping-logger-install.sh && sudo bash /tmp/ping-logger-install.sh
+curl -fsSL https://raw.githubusercontent.com/pangzibaike/ping-logger/v1.1.1/install.sh -o /tmp/ping-logger-install.sh && sudo bash /tmp/ping-logger-install.sh
 ```
 
 安装完成会显示 sslip.io HTTPS 地址、admin 用户名和随机密码。公网 IP 自动检测错误时，可用 `sudo PUBLIC_IP=你的公网IP bash /tmp/ping-logger-install.sh` 指定。

@@ -2,14 +2,14 @@
 set -Eeuo pipefail
 umask 027
 REPO=pangzibaike/ping-logger
-VERSION=${PING_LOGGER_VERSION:-v1.1.0}
+PING_LOGGER_RELEASE_VERSION=${PING_LOGGER_VERSION:-v1.1.1}
 PUBLIC_IP=${PUBLIC_IP:-}
 TMP=$(mktemp -d)
 trap 'rm -rf -- "$TMP"' EXIT
 fail() { echo "错误：$*" >&2; exit 1; }
 [[ $EUID == 0 ]] || fail '请使用 sudo bash install.sh'
 [[ -d /run/systemd/system ]] || fail '需要 systemd'
-[[ $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail '版本号格式不正确'
+[[ $PING_LOGGER_RELEASE_VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail '版本号格式不正确'
 source /etc/os-release
 [[ $ID == debian || $ID == ubuntu ]] || fail '目前仅支持 Debian 12/13、Ubuntu 22.04/24.04（systemd）'
 command -v apt-get >/dev/null || fail '需要 apt-get'
@@ -49,7 +49,7 @@ if [[ -n ${PING_LOGGER_SOURCE_DIR:-} ]]; then
     cp -r -- "$SOURCE/$item" "$TMP/"
   done
 else
-  curl -fLsS --retry 3 "https://github.com/$REPO/archive/refs/tags/$VERSION.tar.gz" -o "$TMP/source.tar.gz"
+  curl -fLsS --retry 3 "https://github.com/$REPO/archive/refs/tags/$PING_LOGGER_RELEASE_VERSION.tar.gz" -o "$TMP/source.tar.gz"
   tar -xzf "$TMP/source.tar.gz" --strip-components=1 -C "$TMP"
 fi
 python3 -m py_compile "$TMP/app.py"
@@ -84,7 +84,7 @@ chown root:caddy /etc/ping-logger/Caddyfile
 chmod 640 /etc/ping-logger/Caddyfile
 install -m 644 "$TMP/ping-logger-web.service" /etc/systemd/system/
 caddy validate --config /etc/ping-logger/Caddyfile --adapter caddyfile
-printf 'URL=https://%s\nUSER=admin\nPASSWORD=%s\nVERSION=%s\n' "$DOMAIN" "$PASSWORD" "$VERSION" > /etc/ping-logger/credentials
+printf 'URL=https://%s\nUSER=admin\nPASSWORD=%s\nVERSION=%s\n' "$DOMAIN" "$PASSWORD" "$PING_LOGGER_RELEASE_VERSION" > /etc/ping-logger/credentials
 chmod 600 /etc/ping-logger/credentials
 systemctl daemon-reload
 systemctl enable --now ping-logger ping-logger-web
